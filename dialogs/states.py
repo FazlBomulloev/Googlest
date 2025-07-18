@@ -19,3 +19,14 @@ class Wizard(StatesGroup):
     statistic = State()
 
     del_mess = State()
+    
+    # Translator settings
+    translator_settings = State()
+    
+    # Mistral settings
+    mistral_settings = State()
+    mistral_add_api_key = State()
+    mistral_add_agent_id = State()
+    mistral_view_tokens = State()
+    mistral_delete_token = State()
+    mistral_edit_token = State()

@@ -12,7 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from dialogs import all_dialogs
 from routers.main_menu import menu_router
 
-from utils.translator import check_deepl
+from utils.translator import check_deepl, check_mistral
 
 
 storage = MemoryStorage()
@@ -32,6 +32,7 @@ async def main():
     await asyncio.gather(
         dp.start_polling(bot),
         check_deepl(),
+        check_mistral(),
     )
 
 if __name__ == "__main__":

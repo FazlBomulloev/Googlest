@@ -21,6 +21,8 @@ from dialogs.getters import (
     admin_only,
     get_home_page,
     get_tokens,
+    get_current_translator,
+    get_mistral_tokens,
 )
 from dialogs.handlers import (
     add_channel,
@@ -33,6 +35,11 @@ from dialogs.handlers import (
     downl_tokens,
     del_message,
     del_token,
+    change_translator,
+    add_mistral_api_key,
+    add_mistral_agent_id,
+    del_mistral_token,
+    edit_mistral_agent_id,
 )
 from dialogs.states import Wizard
 
@@ -71,10 +78,27 @@ home_page = Window(
             ),
         ),
     ),
+    Group(
+        Row(
+            SwitchTo(
+                Const("Изменить переводчик"),
+                id="translator_settings",
+                state=Wizard.translator_settings,
+                when=admin_only,
+            ),
+            SwitchTo(
+                Const("Настроить Mistral"),
+                id="mistral_settings",
+                state=Wizard.mistral_settings,
+                when=admin_only,
+            ),
+        ),
+    ),
     state=Wizard.home_page,
     getter=get_home_page,
     parse_mode="html",
 )
+
 """УДАЛЕНИЕ СООБЩЕНИЙ"""
 
 del_mess = Window(
@@ -229,4 +253,64 @@ change_admin = Window(
     getter=get_admins_update,
     state=Wizard.update_admin,
     parse_mode="html",
+)
+
+"""НАСТРОЙКИ ПЕРЕВОДЧИКА"""
+
+translator_settings = Window(
+    Format("Сейчас используется: {current_translator}"),
+    Button(Const("Изменить"), id="change_translator", on_click=change_translator),
+    SwitchTo(Const("Назад"), id="back_translator", state=Wizard.home_page),
+    getter=get_current_translator,
+    state=Wizard.translator_settings,
+)
+
+"""НАСТРОЙКИ MISTRAL"""
+
+mistral_settings = Window(
+    Const("Настройки Mistral"),
+    SwitchTo(Const("Добавить API key"), id="add_mistral_api", state=Wizard.mistral_add_api_key),
+    SwitchTo(Const("Посмотреть API key"), id="view_mistral_tokens", state=Wizard.mistral_view_tokens),
+    SwitchTo(Const("Назад"), id="back_mistral", state=Wizard.home_page),
+    state=Wizard.mistral_settings,
+)
+
+mistral_add_api_key = Window(
+    Const("Добавьте ключ"),
+    TextInput(id="mistral_api_key_input", on_success=add_mistral_api_key),
+    SwitchTo(Const("Назад"), id="back_mistral_settings", state=Wizard.mistral_settings),
+    state=Wizard.mistral_add_api_key,
+)
+
+mistral_add_agent_id = Window(
+    Const("Добавьте id агента"),
+    TextInput(id="mistral_agent_id_input", on_success=add_mistral_agent_id),
+    SwitchTo(Const("Назад"), id="back_mistral_settings", state=Wizard.mistral_settings),
+    state=Wizard.mistral_add_agent_id,
+)
+
+mistral_view_tokens = Window(
+    Const("Список API ключей Mistral:\n"),
+    List(
+        Format("{item[0]} - {item[1]} | {item[2]} | {item[3]}"),
+        items="items",
+    ),
+    SwitchTo(Const("Удалить токен"), id="del_mistral_token", state=Wizard.mistral_delete_token),
+    SwitchTo(Const("Назад"), id="back_mistral_settings", state=Wizard.mistral_settings),
+    getter=get_mistral_tokens,
+    state=Wizard.mistral_view_tokens,
+)
+
+mistral_delete_token = Window(
+    Const("Отправьте ID токена для удаления"),
+    TextInput(id="mistral_token_del_id", on_success=del_mistral_token),
+    SwitchTo(Const("Назад"), id="back_mistral_view", state=Wizard.mistral_view_tokens),
+    state=Wizard.mistral_delete_token,
+)
+
+mistral_edit_token = Window(
+    Const("Отправьте ID токена для изменения агента, затем новый ID агента"),
+    TextInput(id="mistral_agent_id_edit", on_success=edit_mistral_agent_id),
+    SwitchTo(Const("Назад"), id="back_mistral_view", state=Wizard.mistral_view_tokens),
+    state=Wizard.mistral_edit_token,
 )

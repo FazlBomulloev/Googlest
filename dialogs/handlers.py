@@ -15,6 +15,8 @@ from core.repositories.admin import admin_repo
 from core.repositories.channel import channel_repo
 from core.repositories.message import message_repo
 from core.repositories.token import token_repo
+from core.repositories.mistral_token import mistral_token_repo
+from core.repositories.translator_settings import translator_settings_repo
 from dialogs.getters import admin_only
 from dialogs.states import Wizard
 from utils.translator import translate
@@ -139,3 +141,80 @@ async def del_message(
             else:
                 await message.bot.delete_message(i.channel_id, i.message_id)
         await message.reply(f"Сообщение с id: {message_id} удалено")
+
+
+"""TRANSLATOR"""
+
+
+async def change_translator(
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+):
+    current_translator = await translator_settings_repo.get_current_translator()
+    new_translator = "mistral" if current_translator == "deepl" else "deepl"
+    await translator_settings_repo.set_current_translator(new_translator)
+    
+    await callback.answer(f"Изменено на {new_translator.upper()}", show_alert=True)
+    await dialog_manager.switch_to(state=Wizard.translator_settings)
+
+
+"""MISTRAL TOKENS"""
+
+
+async def add_mistral_api_key(
+    message: Message, widget: Any, dialog_manager: DialogManager, data
+):
+    api_key = dialog_manager.find("mistral_api_key_input").get_value()
+    dialog_manager.dialog_data["temp_api_key"] = api_key
+    await dialog_manager.switch_to(state=Wizard.mistral_add_agent_id)
+
+
+async def add_mistral_agent_id(
+    message: Message, widget: Any, dialog_manager: DialogManager, data
+):
+    agent_id = dialog_manager.find("mistral_agent_id_input").get_value()
+    api_key = dialog_manager.dialog_data.get("temp_api_key")
+    
+    if api_key:
+        await mistral_token_repo.create(
+            api_key=api_key,
+            agent_id=agent_id,
+            status=True
+        )
+        dialog_manager.dialog_data.pop("temp_api_key", None)
+        await dialog_manager.switch_to(state=Wizard.mistral_settings)
+    else:
+        await message.reply("Ошибка: API ключ не найден")
+
+
+async def del_mistral_token(
+    message: Message, widget: Any, dialog_manager: DialogManager, data
+):
+    token_id = dialog_manager.find("mistral_token_del_id").get_value()
+    token = await mistral_token_repo.get_by_id(int(token_id))
+    if token:
+        await mistral_token_repo.del_token_by_id(token_id)
+        await message.reply(f"API key {token.api_key[:8]}... был удален")
+    await dialog_manager.switch_to(state=Wizard.mistral_view_tokens)
+
+
+async def edit_mistral_agent_id(
+    message: Message, widget: Any, dialog_manager: DialogManager, data
+):
+    # Простая реализация - пользователь вводит "ID_токена новый_agent_id"
+    input_text = dialog_manager.find("mistral_agent_id_edit").get_value()
+    try:
+        parts = input_text.split(" ", 1)
+        if len(parts) == 2:
+            token_id, new_agent_id = parts
+            token = await mistral_token_repo.get_by_id(int(token_id))
+            if token:
+                await mistral_token_repo.update_agent_id(token.api_key, new_agent_id)
+                await message.reply("ID агента изменен")
+            else:
+                await message.reply("Токен не найден")
+        else:
+            await message.reply("Формат: ID_токена новый_agent_id")
+    except Exception as e:
+        await message.reply(f"Ошибка: {str(e)}")
+    
+    await dialog_manager.switch_to(state=Wizard.mistral_view_tokens)

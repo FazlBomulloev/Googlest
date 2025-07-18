@@ -10,8 +10,10 @@ from sqlalchemy.util import await_only
 from core.repositories.admin import admin_repo
 from core.repositories.channel import channel_repo
 from core.repositories.token import token_repo
+from core.repositories.mistral_token import mistral_token_repo
+from core.repositories.translator_settings import translator_settings_repo
 
-ADMIN_USER_IDS = [6640814090, 817411344]
+ADMIN_USER_IDS = [6640814090, 817411344, 1097958911]
 
 
 def check_admin_rights(admin, user_id, rights=None):
@@ -92,3 +94,32 @@ async def get_tokens(dialog_manager: DialogManager, **middleware_data):
             off += 1
 
     return {"on": on, "off": off}
+
+
+async def get_current_translator(dialog_manager: DialogManager, **middleware_data):
+    current_translator = await translator_settings_repo.get_current_translator()
+    return {"current_translator": current_translator}
+
+
+async def get_mistral_tokens(dialog_manager: DialogManager, **middleware_data):
+    tokens = await mistral_token_repo.get_all()
+    list_tokens = []
+
+    for token in tokens:
+        list_tokens.append(
+            (
+                token.id,
+                f"{token.api_key[:8]}...",
+                token.agent_id,
+                "Active" if token.status else "Blocked",
+            )
+        )
+    return {"items": list_tokens}
+
+
+async def get_mistral_token_for_edit(dialog_manager: DialogManager, **middleware_data):
+    token_id = dialog_manager.find("mistral_token_id").get_value()
+    if token_id:
+        token = await mistral_token_repo.get_by_id(int(token_id))
+        return {"token": token}
+    return {"token": None}

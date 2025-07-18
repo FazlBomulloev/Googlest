@@ -17,5 +17,12 @@ all_dialogs = [
         del_mess,
         statistic,
         del_token,
+        translator_settings,
+        mistral_settings,
+        mistral_add_api_key,
+        mistral_add_agent_id,
+        mistral_view_tokens,
+        mistral_delete_token,
+        mistral_edit_token,
     ),
 ]
