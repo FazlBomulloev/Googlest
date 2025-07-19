@@ -224,11 +224,11 @@ async def edit_mistral_agent_id(
 # ========== НОВЫЕ ХЕНДЛЕРЫ ДЛЯ ЯЗЫКОВ ==========
 
 async def view_language(
-    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager, item_id: str
 ):
     """Переход к просмотру конкретного языка"""
-    language_id = widget.widget_id
-    dialog_manager.dialog_data["language_id"] = language_id
+    # item_id уже содержит правильный language_id от Select виджета
+    dialog_manager.dialog_data["language_id"] = item_id
     await dialog_manager.switch_to(state=Wizard.mistral_language_view)
 
 
@@ -260,10 +260,10 @@ async def add_language_agent(
 
 
 async def add_language_complete(
-    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager, item_id: str
 ):
     """Завершить создание языка с выбранным каналом"""
-    channel_id = widget.widget_id
+    channel_id = item_id  # Используем переданный item_id
     
     # Получаем временные данные
     language_name = dialog_manager.dialog_data.get("temp_language_name")
@@ -340,10 +340,10 @@ async def edit_language_agent_id(
 
 
 async def add_channel_to_language(
-    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager, item_id: str
 ):
     """Добавить канал к языку"""
-    channel_id = widget.widget_id
+    channel_id = item_id  # Используем переданный item_id
     language_id = dialog_manager.dialog_data.get("language_id")
     
     if not language_id:
@@ -368,10 +368,10 @@ async def add_channel_to_language(
 
 
 async def remove_channel_from_language(
-    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager, item_id: str
 ):
     """Удалить канал из языка"""
-    channel_id = widget.widget_id
+    channel_id = item_id  # Используем переданный item_id
     language_id = dialog_manager.dialog_data.get("language_id")
     
     if not language_id:
@@ -392,10 +392,10 @@ async def remove_channel_from_language(
 
 
 async def delete_language(
-    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager, item_id: str
 ):
     """Удалить язык"""
-    language_id = widget.widget_id
+    language_id = item_id  # Используем переданный item_id
     
     try:
         language = await mistral_language_repo.get_by_id(int(language_id))

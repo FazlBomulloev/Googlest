@@ -146,7 +146,8 @@ async def get_mistral_languages(dialog_manager: DialogManager, **middleware_data
 
 async def get_mistral_language_view(dialog_manager: DialogManager, **middleware_data):
     """Получить детальную информацию о языке"""
-    language_id = dialog_manager.find("language_id").get_value()
+    # Получаем language_id из dialog_data, а не из виджета
+    language_id = dialog_manager.dialog_data.get("language_id")
     if not language_id:
         return {"language": None, "channels": []}
 
@@ -186,7 +187,7 @@ async def get_unassigned_channels(dialog_manager: DialogManager, **middleware_da
 
 async def get_language_channels_for_removal(dialog_manager: DialogManager, **middleware_data):
     """Получить каналы конкретного языка для удаления"""
-    language_id = dialog_manager.find("language_id").get_value()
+    language_id = dialog_manager.dialog_data.get("language_id")
     if not language_id:
         return {"items": []}
 

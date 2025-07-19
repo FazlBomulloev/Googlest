@@ -78,7 +78,8 @@ async def process_media_group(message: Message, media_type: str, file_id: str):
     failed_channels = []
 
     with ProcessPoolExecutor(max_workers=15) as executor:
-        futures = {}
+        # Создаем задачи для всех каналов
+        tasks = {}
         
         for watermark, output_path in zip(watermarks, output_paths.values()):
             channel_id = next(
@@ -94,11 +95,11 @@ async def process_media_group(message: Message, media_type: str, file_id: str):
                 output_path,
                 channel.watermark,
             )
-            futures[future] = (channel_id, watermark, output_path)
+            tasks[future] = (channel_id, watermark, output_path)
         
         # Обрабатываем результаты по мере завершения
-        for future in asyncio.as_completed(futures):
-            channel_id, watermark, output_path = futures[future]
+        for future in asyncio.as_completed(tasks.keys()):
+            channel_id, watermark, output_path = tasks[future]
             try:
                 result = await future
                 if result is not None:
@@ -163,7 +164,8 @@ async def process_media_single(message: Message, is_video: bool):
     failed_channels = []
 
     with ProcessPoolExecutor(max_workers=4) as executor:
-        futures = {}
+        # Создаем задачи для всех каналов
+        tasks = {}
         
         for watermark, output_path in zip(watermarks, output_paths.values()):
             channel_id = next(
@@ -179,11 +181,11 @@ async def process_media_single(message: Message, is_video: bool):
                 output_path,
                 channel.watermark,
             )
-            futures[future] = (channel_id, watermark, output_path)
+            tasks[future] = (channel_id, watermark, output_path)
         
         # Обрабатываем результаты по мере завершения
-        for future in asyncio.as_completed(futures):
-            channel_id, watermark, output_path = futures[future]
+        for future in asyncio.as_completed(tasks.keys()):
+            channel_id, watermark, output_path = tasks[future]
             try:
                 result = await future
                 if result is not None:
