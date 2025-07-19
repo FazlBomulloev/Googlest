@@ -366,7 +366,7 @@ mistral_language_view = Window(
         items="channels",
         when="channels",
     ),
-    Const("📋 Каналов не привязано", when=lambda data, **kwargs: not data.get("channels")),
+    Const("📋 Каналов не привязано", when=lambda data, widget, manager: not data.get("channels")),
     Format("\n🔑 API Key: {api_key_short}"),
     Format("🤖 Agent ID: {agent_id_short}\n"),
     Row(

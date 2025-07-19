@@ -1,4 +1,4 @@
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, join
 from sqlalchemy.exc import SQLAlchemyError, NoResultFound
 from sqlalchemy.orm import selectinload
 
@@ -60,7 +60,7 @@ class LanguageChannelRepository(BaseRepository):
             try:
                 query = (
                     select(Channel)
-                    .join(self.model)
+                    .select_from(join(Channel, self.model, Channel.channel_id == self.model.channel_id))
                     .filter(self.model.language_id == language_id)
                 )
                 result = await session.execute(query)
