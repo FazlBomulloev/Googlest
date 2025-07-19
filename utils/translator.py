@@ -1,4 +1,4 @@
-# -- 1.0.0
+# -- 3.0.0 - Final version with strict error handling
 import asyncio
 import datetime
 import logging
@@ -10,6 +10,8 @@ import deepl
 from core.repositories.token import token_repo
 from core.repositories.mistral_token import mistral_token_repo
 from core.repositories.translator_settings import translator_settings_repo
+from core.repositories.mistral_language import mistral_language_repo
+from core.repositories.language_channel import language_channel_repo
 from utils.mistral_client import (
     MistralClient, 
     MistralRateLimitError, 
@@ -20,7 +22,7 @@ from utils.mistral_client import (
 )
 
 logging.basicConfig(
-    level=logging.INFO,  # Показывать INFO, WARNING, ERROR и т.д.
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -34,23 +36,46 @@ proxy = {
     "http": "168.80.201.196:8000:GvjxK5:roPDLH",
 }
 
+# Маппинг языков для DeepL
+DEEPL_LANGUAGE_MAP = {
+    "Болгарский": "BG",
+    "Чешский": "CS", 
+    "Немецкий": "DE",
+    "Греческий": "EL",
+    "Английский": "EN-US",
+    "Испанский": "ES",
+    "Финский": "FI",
+    "Французский": "FR",
+    "Венгерский": "HU",
+    "Итальянский": "IT",
+    "Голландский": "NL",
+    "Польский": "PL",
+    "Румынский": "RO",
+    "Словацкий": "SK",
+    "Турецкий": "TR",
+    "Русский": "RU"
+}
 
-async def translate_with_deepl(text: str, lang: str) -> str:
+
+class TranslationError(Exception):
+    """Исключение для ошибок перевода"""
+    pass
+
+
+async def translate_with_deepl(text: str, language_name: str) -> str:
     """
     Переводит текст через DeepL API
+    Raises TranslationError если перевод невозможен
     """
     tokens = await token_repo.get_all()
-    deepl_langs = [
-        "BG", "CS", "DA", "DE", "EL", "EN", "EN-GB", "EN-US", "ES", "ET", "FI", "FR", 
-        "HU", "ID", "IT", "JA", "KO", "LT", "LV", "NB", "NL", "PL", "PT", "PT-BR", 
-        "PT-PT", "RO", "SK", "SL", "SV", "TR", "UK", "ZH", "RU"
-    ]
     
-    if lang not in deepl_langs:
-        raise Exception(f"Language {lang} not supported by DeepL")
+    # Получаем код языка для DeepL
+    deepl_lang_code = DEEPL_LANGUAGE_MAP.get(language_name)
+    if not deepl_lang_code:
+        raise TranslationError(f"Language {language_name} not supported by DeepL")
     
     if not tokens:
-        raise Exception("No DeepL tokens available")
+        raise TranslationError("No DeepL tokens available")
     
     for token in tokens:
         if not token.status:
@@ -59,10 +84,10 @@ async def translate_with_deepl(text: str, lang: str) -> str:
         try:
             result = (
                 deepl.Translator(token.token, proxy=proxy)
-                .translate_text(text, target_lang=lang)
+                .translate_text(text, target_lang=deepl_lang_code)
                 .text
             )
-            logger.info(f"✅ DeepL translation successful: {token.token[:8]}...")
+            logger.info(f"✅ DeepL translation successful ({language_name}): {token.token[:8]}...")
             return result
         except QuotaExceededException:
             unblock_time = datetime.datetime.now() + datetime.timedelta(days=10)
@@ -78,73 +103,126 @@ async def translate_with_deepl(text: str, lang: str) -> str:
             logger.error(f"❌ DeepL error for token {token.token[:8]}...: {str(e)}")
             continue
     
-    raise Exception("All DeepL tokens exhausted or failed")
+    raise TranslationError("All DeepL tokens exhausted or failed")
 
 
-async def translate_with_mistral(text: str, lang: str) -> str:
+async def translate_with_mistral(text: str, language_name: str) -> str:
     """
-    Переводит текст через Mistral API
+    Переводит текст через Mistral API с языково-специфичным агентом
+    Raises TranslationError если перевод невозможен
     """
-    tokens = await mistral_token_repo.get_all()
+    # Получаем язык из базы данных
+    language = await mistral_language_repo.get_by_name(language_name)
     
-    if not tokens:
-        raise Exception("No Mistral tokens available")
+    if not language:
+        raise TranslationError(f"Language {language_name} not found in Mistral languages")
     
-    for token in tokens:
-        if not token.status:
-            continue
+    if not language.status:
+        raise TranslationError(f"Language {language_name} is disabled")
+    
+    try:
+        client = MistralClient(language.api_key, language.agent_id)
+        result = await client.translate(text, language_name)
+        if result:
+            logger.info(f"✅ Mistral translation successful ({language_name}): {language.api_key[:8]}...")
+            return result
+        else:
+            raise TranslationError(f"Empty response from Mistral for {language_name}")
             
-        try:
-            client = MistralClient(token.api_key, token.agent_id)
-            result = await client.translate(text, lang)
-            if result:
-                logger.info(f"✅ Mistral translation successful: {token.api_key[:8]}...")
-                return result
-        except MistralRateLimitError:
-            unblock_time = datetime.datetime.now() + datetime.timedelta(hours=1)
-            await mistral_token_repo.update_time(token.api_key, unblock_time)
-            await mistral_token_repo.update_status(token.api_key, False)
-            logger.warning(f"🚫 Mistral rate limit: {token.api_key[:8]}... Blocked until {unblock_time}")
-            continue
-        except MistralAuthError:
-            await mistral_token_repo.del_token(token.api_key)
-            logger.warning(f"❌ Mistral token deleted (invalid): {token.api_key[:8]}...")
-            continue
-        except (MistralAPIError, MistralTimeoutError, MistralConnectionError) as e:
-            logger.error(f"❌ Mistral error for token {token.api_key[:8]}...: {str(e)}")
-            continue
+    except MistralRateLimitError:
+        unblock_time = datetime.datetime.now() + datetime.timedelta(hours=1)
+        await mistral_language_repo.update_status(language.id, False)
+        logger.warning(f"🚫 Mistral rate limit ({language_name}): {language.api_key[:8]}... Blocked until {unblock_time}")
+        raise TranslationError(f"Mistral rate limit for {language_name}")
+        
+    except MistralAuthError:
+        await mistral_language_repo.update_status(language.id, False)
+        logger.warning(f"❌ Mistral auth error ({language_name}): {language.api_key[:8]}...")
+        raise TranslationError(f"Mistral authentication failed for {language_name}")
+        
+    except (MistralAPIError, MistralTimeoutError, MistralConnectionError) as e:
+        logger.error(f"❌ Mistral error ({language_name}) for {language.api_key[:8]}...: {str(e)}")
+        raise TranslationError(f"Mistral API error for {language_name}: {str(e)}")
+
+
+async def get_language_by_channel_id(channel_id: str) -> str:
+    """
+    Получает название языка по ID канала
+    """
+    # Ищем в новой системе языков
+    language_channel = await language_channel_repo.get_language_by_channel(channel_id)
+    if language_channel:
+        language = await mistral_language_repo.get_by_id(language_channel.language_id)
+        if language:
+            logger.info(f"🎯 Found language {language.name} for channel {channel_id}")
+            return language.name
     
-    raise Exception("All Mistral tokens exhausted or failed")
+    # Если не найдено, возвращаем русский (для каналов без перевода)
+    logger.warning(f"⚠️ No language found for channel {channel_id}, using Russian")
+    return "Русский"
 
 
-async def translate(text: str, lang: str = "EN-US") -> str:
+async def translate(text: str, channel_id: str = None, language_name: str = None) -> str:
     """
-    Основная функция перевода с ротацией между переводчиками
+    Основная функция перевода с СТРОГОЙ обработкой ошибок
+    Raises TranslationError если перевод невозможен для критических каналов
     """
+    # Определяем язык перевода
+    if language_name:
+        target_language = language_name
+    elif channel_id:
+        target_language = await get_language_by_channel_id(channel_id)
+    else:
+        target_language = "Русский"  # По умолчанию
+    
+    # Если язык русский - не переводим
+    if target_language == "Русский":
+        logger.info("🇷🇺 Russian language detected, skipping translation")
+        return text
+    
     # Получаем текущий выбранный переводчик
     current_translator = await translator_settings_repo.get_current_translator()
+    
+    logger.info(f"🌍 Translating to {target_language} using {current_translator}")
     
     # Сначала пробуем выбранный переводчик
     if current_translator == "deepl":
         try:
-            return await translate_with_deepl(text, lang)
-        except Exception as e:
-            logger.warning(f"DeepL failed: {str(e)}, trying Mistral...")
+            return await translate_with_deepl(text, target_language)
+        except TranslationError as e:
+            logger.warning(f"DeepL failed for {target_language}: {str(e)}, trying Mistral...")
             try:
-                return await translate_with_mistral(text, lang)
-            except Exception as e2:
-                logger.error(f"Both translators failed. DeepL: {str(e)}, Mistral: {str(e2)}")
-                return text  # Возвращаем оригинальный текст
+                return await translate_with_mistral(text, target_language)
+            except TranslationError as e2:
+                logger.error(f"Both translators failed for {target_language}. DeepL: {str(e)}, Mistral: {str(e2)}")
+                # СТРОГАЯ ОБРАБОТКА: выбрасываем исключение вместо возврата оригинала
+                raise TranslationError(f"Translation failed for {target_language}: DeepL - {str(e)}, Mistral - {str(e2)}")
     else:  # mistral
         try:
-            return await translate_with_mistral(text, lang)
-        except Exception as e:
-            logger.warning(f"Mistral failed: {str(e)}, trying DeepL...")
+            return await translate_with_mistral(text, target_language)
+        except TranslationError as e:
+            logger.warning(f"Mistral failed for {target_language}: {str(e)}, trying DeepL...")
             try:
-                return await translate_with_deepl(text, lang)
-            except Exception as e2:
-                logger.error(f"Both translators failed. Mistral: {str(e)}, DeepL: {str(e2)}")
-                return text  # Возвращаем оригинальный текст
+                return await translate_with_deepl(text, target_language)
+            except TranslationError as e2:
+                logger.error(f"Both translators failed for {target_language}. Mistral: {str(e)}, DeepL: {str(e2)}")
+                raise TranslationError(f"Translation failed for {target_language}: Mistral - {str(e)}, DeepL - {str(e2)}")
+
+
+async def safe_translate(text: str, channel_id: str = None, language_name: str = None) -> tuple[str, bool]:
+    """
+    Безопасная функция перевода, которая возвращает (текст, успешность)
+    Используется в основном коде для обработки ошибок без прерывания публикации
+    """
+    try:
+        translated_text = await translate(text, channel_id, language_name)
+        return translated_text, True
+    except TranslationError as e:
+        logger.error(f"💥 Translation failed: {str(e)}")
+        return text, False  # Возвращаем оригинал + флаг ошибки
+    except Exception as e:
+        logger.error(f"💥 Unexpected translation error: {str(e)}")
+        return text, False
 
 
 async def check_deepl():
@@ -198,50 +276,30 @@ async def check_deepl():
 
 async def check_mistral():
     """
-    Проверяет и обновляет статус Mistral токенов
+    Проверяет и обновляет статус всех Mistral языков
     """
     while True:
-        logger.info("🔍 Starting Mistral token check")
-        tokens = await mistral_token_repo.get_all()
+        logger.info("🔍 Starting Mistral languages check")
+        languages = await mistral_language_repo.get_all()
 
-        for token in tokens:
+        for language in languages:
             try:
-                client = MistralClient(token.api_key, token.agent_id)
+                client = MistralClient(language.api_key, language.agent_id)
                 is_healthy = await client.check_health()
                 
                 if is_healthy:
-                    await mistral_token_repo.update_time(token.api_key, None)
-                    await mistral_token_repo.update_status(token.api_key, True)
-                    logger.info(f"✅ Mistral token valid: {token.api_key[:8]}...")
+                    await mistral_language_repo.update_status(language.id, True)
+                    logger.info(f"✅ Mistral language valid ({language.name}): {language.api_key[:8]}...")
                 else:
-                    logger.warning(f"⚠️ Mistral token unhealthy: {token.api_key[:8]}...")
+                    logger.warning(f"⚠️ Mistral language unhealthy ({language.name}): {language.api_key[:8]}...")
                     
             except Exception as e:
-                logger.error(f"[MISTRAL CHECK ERROR] {e}")
+                logger.error(f"[MISTRAL CHECK ERROR] for {language.name}: {e}")
 
-        # Проверяем заблокированные токены
-        current_time = datetime.datetime.now()
-        for token in tokens:
-            if token.time is not None and current_time > datetime.datetime.fromisoformat(token.time):
-                try:
-                    client = MistralClient(token.api_key, token.agent_id)
-                    is_healthy = await client.check_health()
-                    
-                    if is_healthy:
-                        await mistral_token_repo.update_status(token.api_key, True)
-                        await mistral_token_repo.update_time(token.api_key, None)
-                        logger.info(f"🔓 Mistral token reactivated: {token.api_key[:8]}...")
-                        
-                except Exception as e:
-                    logger.error(f"[MISTRAL REACTIVATION ERROR] {e}")
-
-        logger.info("🕒 Mistral check sleeping for 1 hour...")
+        logger.info("🕒 Mistral languages check sleeping for 1 hour...")
         await asyncio.sleep(3600)  # Проверяем каждый час
 
 
 if __name__ == "__main__":
-    print(
-        translate(
-            """В американских тюрьмах остаются десятки россиян, дипломаты приложат максимум усилий для их освобождения, заявило посольство РФ в США."""
-        )
-    )
+    # Пример использования
+    asyncio.run(translate("Привет мир", language_name="Чешский"))

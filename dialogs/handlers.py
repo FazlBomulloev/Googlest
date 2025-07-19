@@ -17,6 +17,8 @@ from core.repositories.message import message_repo
 from core.repositories.token import token_repo
 from core.repositories.mistral_token import mistral_token_repo
 from core.repositories.translator_settings import translator_settings_repo
+from core.repositories.mistral_language import mistral_language_repo
+from core.repositories.language_channel import language_channel_repo
 from dialogs.getters import admin_only
 from dialogs.states import Wizard
 from utils.translator import translate
@@ -27,12 +29,11 @@ async def add_channel(
 ):
     channel_info = dialog_manager.find("channel_add_info").get_value()
     channel_info = channel_info.split(",")
-    text_disc = await translate("Доступ к дискуссии", channel_info[0].split(" ")[1])
-    text_inv = await translate("Подписаться на канал", channel_info[0].split(" ")[1])
+    text_disc = await translate("Доступ к дискуссии", language_name="Русский")
+    text_inv = await translate("Подписаться на канал", language_name="Русский")
     await channel_repo.create(
         channel_id=channel_info[0].split(" ")[0],
         channel_name=channel_info[1],
-        language=channel_info[0].split(" ")[1],
         link_discussion=channel_info[2].strip(),
         link_invitation=channel_info[3].strip(),
         text_discussion=text_disc,
@@ -218,3 +219,193 @@ async def edit_mistral_agent_id(
         await message.reply(f"Ошибка: {str(e)}")
     
     await dialog_manager.switch_to(state=Wizard.mistral_view_tokens)
+
+
+# ========== НОВЫЕ ХЕНДЛЕРЫ ДЛЯ ЯЗЫКОВ ==========
+
+async def view_language(
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+):
+    """Переход к просмотру конкретного языка"""
+    language_id = widget.widget_id
+    dialog_manager.dialog_data["language_id"] = language_id
+    await dialog_manager.switch_to(state=Wizard.mistral_language_view)
+
+
+async def add_language_name(
+    message: Message, widget: Any, dialog_manager: DialogManager, data
+):
+    """Сохранить название языка и перейти к вводу API key"""
+    language_name = dialog_manager.find("language_name_input").get_value()
+    dialog_manager.dialog_data["temp_language_name"] = language_name
+    await dialog_manager.switch_to(state=Wizard.mistral_add_language_key)
+
+
+async def add_language_key(
+    message: Message, widget: Any, dialog_manager: DialogManager, data
+):
+    """Сохранить API key и перейти к вводу Agent ID"""
+    api_key = dialog_manager.find("language_key_input").get_value()
+    dialog_manager.dialog_data["temp_language_api_key"] = api_key
+    await dialog_manager.switch_to(state=Wizard.mistral_add_language_agent)
+
+
+async def add_language_agent(
+    message: Message, widget: Any, dialog_manager: DialogManager, data
+):
+    """Сохранить Agent ID и перейти к выбору канала"""
+    agent_id = dialog_manager.find("language_agent_input").get_value()
+    dialog_manager.dialog_data["temp_language_agent_id"] = agent_id
+    await dialog_manager.switch_to(state=Wizard.mistral_add_language_channel)
+
+
+async def add_language_complete(
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+):
+    """Завершить создание языка с выбранным каналом"""
+    channel_id = widget.widget_id
+    
+    # Получаем временные данные
+    language_name = dialog_manager.dialog_data.get("temp_language_name")
+    api_key = dialog_manager.dialog_data.get("temp_language_api_key")
+    agent_id = dialog_manager.dialog_data.get("temp_language_agent_id")
+    
+    if not all([language_name, api_key, agent_id]):
+        await callback.answer("Ошибка: не все данные заполнены", show_alert=True)
+        return
+    
+    try:
+        # Создаем язык
+        language = await mistral_language_repo.create(
+            name=language_name,
+            api_key=api_key,
+            agent_id=agent_id,
+            status=True
+        )
+        
+        # Привязываем канал к языку
+        await language_channel_repo.add_channel_to_language(
+            language_id=language.id,
+            channel_id=channel_id
+        )
+        
+        # Очищаем временные данные
+        dialog_manager.dialog_data.pop("temp_language_name", None)
+        dialog_manager.dialog_data.pop("temp_language_api_key", None)
+        dialog_manager.dialog_data.pop("temp_language_agent_id", None)
+        
+        await callback.answer(f"Язык {language_name} создан!", show_alert=True)
+        await dialog_manager.switch_to(state=Wizard.mistral_languages)
+        
+    except Exception as e:
+        await callback.answer(f"Ошибка создания: {str(e)}", show_alert=True)
+
+
+async def edit_language_api_key(
+    message: Message, widget: Any, dialog_manager: DialogManager, data
+):
+    """Изменить API key языка"""
+    new_api_key = dialog_manager.find("language_api_key_edit").get_value()
+    language_id = dialog_manager.dialog_data.get("language_id")
+    
+    if not language_id:
+        await message.reply("Ошибка: язык не выбран")
+        return
+    
+    try:
+        await mistral_language_repo.update_api_key(int(language_id), new_api_key)
+        await message.reply("API key обновлен")
+        await dialog_manager.switch_to(state=Wizard.mistral_language_view)
+    except Exception as e:
+        await message.reply(f"Ошибка: {str(e)}")
+
+
+async def edit_language_agent_id(
+    message: Message, widget: Any, dialog_manager: DialogManager, data
+):
+    """Изменить Agent ID языка"""
+    new_agent_id = dialog_manager.find("language_agent_id_edit").get_value()
+    language_id = dialog_manager.dialog_data.get("language_id")
+    
+    if not language_id:
+        await message.reply("Ошибка: язык не выбран")
+        return
+    
+    try:
+        await mistral_language_repo.update_agent_id(int(language_id), new_agent_id)
+        await message.reply("Agent ID обновлен")
+        await dialog_manager.switch_to(state=Wizard.mistral_language_view)
+    except Exception as e:
+        await message.reply(f"Ошибка: {str(e)}")
+
+
+async def add_channel_to_language(
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+):
+    """Добавить канал к языку"""
+    channel_id = widget.widget_id
+    language_id = dialog_manager.dialog_data.get("language_id")
+    
+    if not language_id:
+        await callback.answer("Ошибка: язык не выбран", show_alert=True)
+        return
+    
+    try:
+        result = await language_channel_repo.add_channel_to_language(
+            language_id=int(language_id),
+            channel_id=channel_id
+        )
+        
+        if result:
+            await callback.answer("Канал добавлен!", show_alert=True)
+        else:
+            await callback.answer("Канал уже привязан к этому языку", show_alert=True)
+            
+        await dialog_manager.switch_to(state=Wizard.mistral_language_view)
+        
+    except Exception as e:
+        await callback.answer(f"Ошибка: {str(e)}", show_alert=True)
+
+
+async def remove_channel_from_language(
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+):
+    """Удалить канал из языка"""
+    channel_id = widget.widget_id
+    language_id = dialog_manager.dialog_data.get("language_id")
+    
+    if not language_id:
+        await callback.answer("Ошибка: язык не выбран", show_alert=True)
+        return
+    
+    try:
+        await language_channel_repo.remove_channel_from_language(
+            language_id=int(language_id),
+            channel_id=channel_id
+        )
+        
+        await callback.answer("Канал удален!", show_alert=True)
+        await dialog_manager.switch_to(state=Wizard.mistral_language_view)
+        
+    except Exception as e:
+        await callback.answer(f"Ошибка: {str(e)}", show_alert=True)
+
+
+async def delete_language(
+    callback: CallbackQuery, widget: Button, dialog_manager: DialogManager
+):
+    """Удалить язык"""
+    language_id = widget.widget_id
+    
+    try:
+        language = await mistral_language_repo.get_by_id(int(language_id))
+        if language:
+            await mistral_language_repo.del_by_id(int(language_id))
+            await callback.answer(f"Язык {language.name} удален!", show_alert=True)
+        else:
+            await callback.answer("Язык не найден", show_alert=True)
+            
+        await dialog_manager.switch_to(state=Wizard.mistral_languages)
+        
+    except Exception as e:
+        await callback.answer(f"Ошибка: {str(e)}", show_alert=True)

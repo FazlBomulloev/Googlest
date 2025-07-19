@@ -12,6 +12,8 @@ from core.repositories.channel import channel_repo
 from core.repositories.token import token_repo
 from core.repositories.mistral_token import mistral_token_repo
 from core.repositories.translator_settings import translator_settings_repo
+from core.repositories.mistral_language import mistral_language_repo
+from core.repositories.language_channel import language_channel_repo
 
 ADMIN_USER_IDS = [6640814090, 817411344, 1097958911]
 
@@ -61,7 +63,6 @@ async def get_channels(dialog_manager: DialogManager, **middleware_data):
             (
                 channel.id,
                 channel.channel_name,
-                channel.language,
                 "Yes" if channel.watermark == True else "No",
             )
         )
@@ -123,3 +124,89 @@ async def get_mistral_token_for_edit(dialog_manager: DialogManager, **middleware
         token = await mistral_token_repo.get_by_id(int(token_id))
         return {"token": token}
     return {"token": None}
+
+
+# ========== НОВЫЕ ГЕТТЕРЫ ДЛЯ ЯЗЫКОВ ==========
+
+async def get_mistral_languages(dialog_manager: DialogManager, **middleware_data):
+    """Получить список всех языков Mistral"""
+    languages = await mistral_language_repo.get_all()
+    list_languages = []
+
+    for language in languages:
+        list_languages.append(
+            (
+                language.id,
+                language.name,
+                "✅" if language.status else "❌",
+            )
+        )
+    return {"items": list_languages}
+
+
+async def get_mistral_language_view(dialog_manager: DialogManager, **middleware_data):
+    """Получить детальную информацию о языке"""
+    language_id = dialog_manager.find("language_id").get_value()
+    if not language_id:
+        return {"language": None, "channels": []}
+
+    # Получаем язык
+    language = await mistral_language_repo.get_by_id(int(language_id))
+    if not language:
+        return {"language": None, "channels": []}
+
+    # Получаем каналы для этого языка
+    channels = await language_channel_repo.get_channels_by_language(int(language_id))
+    
+    channel_list = []
+    for channel in channels:
+        channel_list.append(
+            (channel.id, channel.channel_name, channel.channel_id)
+        )
+
+    return {
+        "language": language,
+        "channels": channel_list,
+        "api_key_short": f"{language.api_key[:8]}..." if language.api_key else "N/A",
+        "agent_id_short": f"{language.agent_id[:20]}..." if language.agent_id else "N/A"
+    }
+
+
+async def get_unassigned_channels(dialog_manager: DialogManager, **middleware_data):
+    """Получить каналы, не привязанные к языкам"""
+    channels = await language_channel_repo.get_unassigned_channels()
+    list_channels = []
+
+    for channel in channels:
+        list_channels.append(
+            (channel.channel_id, channel.channel_name)
+        )
+    return {"items": list_channels}
+
+
+async def get_language_channels_for_removal(dialog_manager: DialogManager, **middleware_data):
+    """Получить каналы конкретного языка для удаления"""
+    language_id = dialog_manager.find("language_id").get_value()
+    if not language_id:
+        return {"items": []}
+
+    channels = await language_channel_repo.get_channels_by_language(int(language_id))
+    list_channels = []
+
+    for channel in channels:
+        list_channels.append(
+            (channel.channel_id, channel.channel_name)
+        )
+    return {"items": list_channels}
+
+
+async def get_all_languages_for_deletion(dialog_manager: DialogManager, **middleware_data):
+    """Получить все языки для удаления"""
+    languages = await mistral_language_repo.get_all()
+    list_languages = []
+
+    for language in languages:
+        list_languages.append(
+            (language.id, language.name)
+        )
+    return {"items": list_languages}

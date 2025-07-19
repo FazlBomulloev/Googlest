@@ -21,9 +21,8 @@ class MistralClient:
         """
         Переводит текст на указанный язык через Mistral API
         """
-        prompt = f"переведи текст на {target_language} без объяснения"
+        prompt = f"translate this text {target_language} without any additional text, just the translation:\n\n{text}\n\n" \
         
-        # ❌ УБИРАЕМ temperature при работе с агентами!
         payload = {
             "agent_id": self.agent_id,
             "messages": [
@@ -32,7 +31,6 @@ class MistralClient:
                     "content": f"{prompt}\n\n{text}"
                 }
             ],
-            # "temperature": 0.1,  # ❌ Эту строку удаляем!
             "max_tokens": 2000
         }
 

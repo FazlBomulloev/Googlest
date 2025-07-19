@@ -8,7 +8,6 @@ class Channel(Base):
 
     channel_id: Mapped[str] = mapped_column(String, nullable=False)
     channel_name: Mapped[str] = mapped_column(String, nullable=False)
-    language: Mapped[str] = mapped_column(String, nullable=False)
     link_discussion: Mapped[str] = mapped_column(String, nullable=False)
     link_invitation: Mapped[str] = mapped_column(String, nullable=False)
     watermark: Mapped[bool] = mapped_column(Boolean, default=False)

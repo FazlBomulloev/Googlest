@@ -23,7 +23,7 @@ from core.repositories.message import message_repo
 from dialogs.states import Wizard
 
 from utils.editor import create_watermarked_video, create_watermarked_photo
-from utils.translator import translate
+from utils.translator import safe_translate, get_language_by_channel_id, TranslationError
 
 menu_router = Router()
 font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -210,8 +210,14 @@ async def process_media_single(message: Message, is_video: bool):
         if message.caption is None:
             caption = f'\n\n<a href="{channel.link_discussion}">{channel.text_discussion}</a>\n\n<a href="{channel.link_invitation}">{channel.text_invitation}</a>'
         else:
+            # Используем безопасный перевод
+            translated_text, success = await safe_translate(message.caption, channel_id=channel.channel_id)
+            if not success:
+                print(f"❌ Перевод не удался для канала {channel.channel_name}, пропускаем")
+                continue
+                
             caption = (
-                await translate(message.caption, channel.language)
+                translated_text
                 + f'\n\n<a href="{channel.link_discussion}">{channel.text_discussion}</a>\n\n<a href="{channel.link_invitation}">{channel.text_invitation}</a>'
             )
 
@@ -296,8 +302,14 @@ async def process_text(message: Message):
     sent_channels = []
     for channel in channels:
         try:
+            # Используем безопасный перевод
+            translated_text, success = await safe_translate(message.text, channel_id=channel.channel_id)
+            if not success:
+                print(f"❌ Перевод не удался для канала {channel.channel_name}, пропускаем")
+                continue
+                
             text = (
-                await translate(message.text, channel.language)
+                translated_text
                 + f'\n\n<a href="{channel.link_discussion}">{channel.text_discussion}</a>\n\n<a href="{channel.link_invitation}">{channel.text_invitation}</a>'
             )
 
@@ -378,7 +390,13 @@ async def handle_media_group(messages: list[Message]):
                             f'<a href="{channel.link_invitation}">{channel.text_invitation}</a>'
                         )
                     else:
-                        caption = await translate(caption_start, channel.language) + (
+                        # Используем безопасный перевод
+                        translated_text, success = await safe_translate(caption_start, channel_id=channel.channel_id)
+                        if not success:
+                            print(f"❌ Перевод не удался для канала {channel.channel_name}, пропускаем")
+                            continue
+                            
+                        caption = translated_text + (
                             f'\n\n<a href="{channel.link_discussion}">{channel.text_discussion}</a>\n\n'
                             f'<a href="{channel.link_invitation}">{channel.text_invitation}</a>'
                         )
