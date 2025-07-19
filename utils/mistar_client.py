@@ -23,6 +23,7 @@ class MistralClient:
         """
         prompt = f"переведи текст на {target_language} без объяснения"
         
+        # ❌ УБИРАЕМ temperature при работе с агентами!
         payload = {
             "agent_id": self.agent_id,
             "messages": [
@@ -31,7 +32,7 @@ class MistralClient:
                     "content": f"{prompt}\n\n{text}"
                 }
             ],
-            "temperature": 0.1,
+            # "temperature": 0.1,  # ❌ Эту строку удаляем!
             "max_tokens": 2000
         }
 

@@ -7,53 +7,62 @@ from moviepy import (
     ImageClip,
 )
 import time
+import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 
 from core.repositories.channel import channel_repo
+
+# Подавляем вывод MoviePy
+os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/local/bin/ffmpeg"
 
 font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 
 def create_watermarked_video(video_path, watermark_text, output_path, wm):
     video = VideoFileClip(video_path)
+    video = video.resized(0.85)  
     
     try:
-        # Создание текстового водяного знака только если нужен
         if wm:
-            # Определяем размер шрифта относительно размера видео
-            font_size = max(20, int(min(video.size) * 0.04))  # Минимум 20px
-            
+            font_size = int(video.size[0] * 0.03)
             watermark = TextClip(
                 text=watermark_text,
                 font_size=font_size,
                 color="red",
                 font=font_path,
-                stroke_color="white",
-                stroke_width=2,
+                stroke_color="white",  # Цвет обводки
+                stroke_width=1,  # Ширина обводки
+                method="caption",  # Метод для автоматического переноса текста
+                size=video.size,  # Размер видео
+                horizontal_align="left",  # Выравнивание текста по левому краю
+                vertical_align="center",  # Выравнивание текста по центру
                 duration=video.duration,
-            ).with_position(('center', 'center')).with_opacity(0.7).rotated(30)
+            ).rotated(30)
             
             # Наложение водяного знака на видео
             result = CompositeVideoClip([video, watermark])
         else:
-            result = video
+            result = CompositeVideoClip([video])
         
-        # Настройки для совместимости с Telegram
+        # 🔧 УНИКАЛЬНЫЙ временный аудиофайл для каждого процесса
+        unique_temp_audio = f"temp-audio-{uuid.uuid4().hex[:8]}.m4a"
+        
         result.write_videofile(
             output_path,
-            codec='libx264',           # H.264 кодек - совместим с Telegram
-            audio_codec='aac',         # AAC аудио кодек
-            temp_audiofile='temp-audio.m4a',
+            codec='libx264',          
+            audio_codec='aac',        
+            temp_audiofile=unique_temp_audio, 
             remove_temp=True,
-            preset='medium',           # Баланс качества и скорости
+            preset='medium',          
             ffmpeg_params=[
-                '-crf', '23',          # Качество видео (18-28 оптимально)
-                '-pix_fmt', 'yuv420p', # Формат пикселей для совместимости
-                '-movflags', '+faststart',  # Для быстрой загрузки
-                '-max_muxing_queue_size', '1024',  # Буфер для стабильности
-                '-avoid_negative_ts', 'make_zero'   # Фиксация временных меток
+                '-crf', '23',         
+                '-pix_fmt', 'yuv420p', 
+                '-movflags', '+faststart',  
+                '-max_muxing_queue_size', '1024',  
+                '-avoid_negative_ts', 'make_zero'   
             ],
-            fps=min(video.fps, 30),    # Ограничиваем до 30 FPS максимум
+            fps=min(video.fps, 30),   
             verbose=False,
             logger=None
         )
@@ -75,35 +84,33 @@ def create_watermarked_photo(photo_path, watermark_text, output_path, wm):
     photo = ImageClip(photo_path)
     
     try:
+        font_size = int(photo.size[0] * 0.03)
+        watermark = TextClip(
+            text=watermark_text,
+            font_size=font_size,
+            color="red",
+            font=font_path,
+            stroke_color="white",  # Цвет обводки
+            stroke_width=1,  # Ширина обводки
+            method="caption",  # Метод для автоматического переноса текста
+            size=photo.size,  # Размер фото
+            horizontal_align="left",  # Выравнивание текста по левому краю
+            vertical_align="center",  # Выравнивание текста по центру
+            duration=photo.duration,
+        ).rotated(30)
+        
+        # Наложение водяного знака на фото и сохранение результата
         if wm:
-            # Создание текстового водяного знака
-            font_size = max(24, int(min(photo.size) * 0.04))  # Минимум 24px для фото
-            
-            watermark = TextClip(
-                text=watermark_text,
-                font_size=font_size,
-                color="red",
-                font=font_path,
-                stroke_color="white",
-                stroke_width=2,
-                duration=1,  # Для фото достаточно 1 секунды
-            ).with_position(('center', 'center')).with_opacity(0.7).rotated(30)
-            
-            # Наложение водяного знака на фото
             result = CompositeVideoClip([photo, watermark])
         else:
             result = CompositeVideoClip([photo])
-        
-        # Получение первого кадра и сохранение как изображение
-        frame = result.get_frame(0)
+            
+        frame = result.get_frame(0)  # Получение первого кадра
         img = Image.fromarray(frame)
-        
-        # Конвертация в RGB и сохранение
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
+        img = img.convert("RGB")  # Удаление альфа-канала
         
         # Сохранение с оптимальными настройками для Telegram
-        img.save(output_path, 'JPEG', quality=85, optimize=True)
+        img.save(output_path, "JPEG", quality=85, optimize=True)
         
         print(f"Фото с водяным знаком '{watermark_text}' сохранено в {output_path}")
         return output_path

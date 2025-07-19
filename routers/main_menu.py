@@ -72,40 +72,46 @@ async def process_media_group(message: Message, media_type: str, file_id: str):
         for i in channels
     }
 
-    # Использование ProcessPoolExecutor для параллельной обработки
+    # Использование ProcessPoolExecutor для параллельной обработки с улучшенной обработкой ошибок
     loop = asyncio.get_event_loop()
+    successful_outputs = {}
+    failed_channels = []
+
     with ProcessPoolExecutor(max_workers=15) as executor:
-        futures = [
-            loop.run_in_executor(
+        futures = {}
+        
+        for watermark, output_path in zip(watermarks, output_paths.values()):
+            channel_id = next(
+                (k for k, v in output_paths.items() if v == output_path), None
+            )
+            channel = await channel_repo.get_by_channel_id(channel_id)
+            
+            future = loop.run_in_executor(
                 executor,
-                (
-                    create_watermarked_video
-                    if media_type == "video"
-                    else create_watermarked_photo
-                ),
+                (create_watermarked_video if media_type == "video" else create_watermarked_photo),
                 media_path,
                 watermark,
                 output_path,
-                (
-                    await channel_repo.get_by_channel_id(
-                        next(
-                            (k for k, v in output_paths.items() if v == output_path),
-                            None,
-                        )
-                    )
-                ).watermark,
+                channel.watermark,
             )
-            for watermark, output_path in zip(watermarks, output_paths.values())
-        ]
+            futures[future] = (channel_id, watermark, output_path)
+        
+        # Обрабатываем результаты по мере завершения
         for future in asyncio.as_completed(futures):
+            channel_id, watermark, output_path = futures[future]
             try:
                 result = await future
-                if result is None:
-                    raise Exception("Одна или несколько задач завершились с ошибкой.")
+                if result is not None:
+                    successful_outputs[channel_id] = output_path
+                    print(f"✅ Успешно обработано: {watermark}")
+                else:
+                    failed_channels.append(channel_id)
+                    print(f"❌ Ошибка обработки: {watermark}")
             except Exception as e:
-                print(f"Ошибка при обработке медиафайла: {e}")
+                failed_channels.append(channel_id)
+                print(f"❌ Исключение при обработке {watermark}: {e}")
 
-    return output_paths, channels, media_path
+    return successful_outputs, channels, media_path, failed_channels
 
 
 async def process_media_single(message: Message, is_video: bool):
@@ -151,39 +157,55 @@ async def process_media_single(message: Message, is_video: bool):
         for i in channels
     }
 
-    # Использование ProcessPoolExecutor для параллельной обработки
+    # Использование ProcessPoolExecutor для параллельной обработки с улучшенной обработкой ошибок
     loop = asyncio.get_event_loop()
+    successful_outputs = {}
+    failed_channels = []
+
     with ProcessPoolExecutor(max_workers=4) as executor:
-        futures = [
-            loop.run_in_executor(
+        futures = {}
+        
+        for watermark, output_path in zip(watermarks, output_paths.values()):
+            channel_id = next(
+                (k for k, v in output_paths.items() if v == output_path), None
+            )
+            channel = await channel_repo.get_by_channel_id(channel_id)
+            
+            future = loop.run_in_executor(
                 executor,
                 (create_watermarked_video if is_video else create_watermarked_photo),
                 media_path,
                 watermark,
                 output_path,
-                (
-                    await channel_repo.get_by_channel_id(
-                        next(
-                            (k for k, v in output_paths.items() if v == output_path),
-                            None,
-                        )
-                    )
-                ).watermark,
+                channel.watermark,
             )
-            for watermark, output_path in zip(watermarks, output_paths.values())
-        ]
+            futures[future] = (channel_id, watermark, output_path)
+        
+        # Обрабатываем результаты по мере завершения
         for future in asyncio.as_completed(futures):
-            result = await future
-            if result is None:
-                raise Exception("Одна или несколько задач завершились с ошибкой.")
+            channel_id, watermark, output_path = futures[future]
+            try:
+                result = await future
+                if result is not None:
+                    successful_outputs[channel_id] = output_path
+                    print(f"✅ Успешно обработано: {watermark}")
+                else:
+                    failed_channels.append(channel_id)
+                    print(f"❌ Ошибка обработки: {watermark}")
+            except Exception as e:
+                failed_channels.append(channel_id)
+                print(f"❌ Исключение при обработке {watermark}: {e}")
 
     # Отправка обработанных медиафайлов во все каналы
+    sent_channels = []
     for channel in channels:
-        # Выбираем путь для отправки: с водяным знаком или без
-        output_path = next(
-            (p for p in output_paths.values() if f"_{channel.channel_id}." in p),
-            media_path,
-        )
+        # Пропускаем каналы с ошибками обработки
+        if channel.channel_id in failed_channels:
+            print(f"⚠️ Пропускаем канал {channel.channel_name} из-за ошибки обработки")
+            continue
+            
+        # Выбираем путь для отправки: с водяным знаком или оригинал
+        output_path = successful_outputs.get(channel.channel_id, media_path)
 
         if message.caption is None:
             caption = f'\n\n<a href="{channel.link_discussion}">{channel.text_discussion}</a>\n\n<a href="{channel.link_invitation}">{channel.text_invitation}</a>'
@@ -199,44 +221,66 @@ async def process_media_single(message: Message, is_video: bool):
             )
             continue
 
-        if is_video:
-            mess = await bot.send_media_group(
-                chat_id=channel.channel_id,
-                media=[
-                    InputMediaVideo(
-                        media=FSInputFile(output_path),
-                        caption=caption,
-                        parse_mode="HTML",
-                    )
-                ],
-                request_timeout=120,
-            )
-            await message_repo.create(
-                main_message_id=str(message.message_id),
-                channel_id=channel.channel_id,
-                message_id=str(mess[0].message_id),
-            )
-        else:
-            mess = await bot.send_media_group(
-                chat_id=channel.channel_id,
-                media=[
-                    InputMediaPhoto(
-                        media=FSInputFile(output_path),
-                        caption=caption,
-                        parse_mode="HTML",
-                    )
-                ],
-                request_timeout=120,
-            )
-            await message_repo.create(
-                main_message_id=str(message.message_id),
-                channel_id=channel.channel_id,
-                message_id=str(mess[0].message_id),
-            )
+        try:
+            if is_video:
+                mess = await bot.send_media_group(
+                    chat_id=channel.channel_id,
+                    media=[
+                        InputMediaVideo(
+                            media=FSInputFile(output_path),
+                            caption=caption,
+                            parse_mode="HTML",
+                        )
+                    ],
+                    request_timeout=120,
+                )
+                await message_repo.create(
+                    main_message_id=str(message.message_id),
+                    channel_id=channel.channel_id,
+                    message_id=str(mess[0].message_id),
+                )
+            else:
+                mess = await bot.send_media_group(
+                    chat_id=channel.channel_id,
+                    media=[
+                        InputMediaPhoto(
+                            media=FSInputFile(output_path),
+                            caption=caption,
+                            parse_mode="HTML",
+                        )
+                    ],
+                    request_timeout=120,
+                )
+                await message_repo.create(
+                    main_message_id=str(message.message_id),
+                    channel_id=channel.channel_id,
+                    message_id=str(mess[0].message_id),
+                )
+            
+            sent_channels.append(channel.channel_name)
+            print(f"✅ Отправлено в канал: {channel.channel_name}")
+            
+        except Exception as e:
+            print(f"❌ Ошибка отправки в канал {channel.channel_name}: {e}")
 
     # Удаление временных файлов
-    for output_path in output_paths.values():
-        os.remove(output_path)
+    for output_path in successful_outputs.values():
+        try:
+            os.remove(output_path)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"⚠️ Не удалось удалить файл {output_path}: {e}")
+
+    # Удаляем оригинальный файл
+    try:
+        os.remove(media_path)
+    except Exception as e:
+        print(f"⚠️ Не удалось удалить оригинальный файл {media_path}: {e}")
+
+    print(f"🎯 Обработка завершена. Успешно отправлено в {len(sent_channels)} каналов")
+    if failed_channels:
+        print(f"❌ Ошибки обработки в {len(failed_channels)} каналах")
 
 
 async def process_text(message: Message):
@@ -249,29 +293,39 @@ async def process_text(message: Message):
     channels = await channel_repo.get_all()
 
     # Отправка текстового сообщения в каналы
+    sent_channels = []
     for channel in channels:
-        text = (
-            await translate(message.text, channel.language)
-            + f'\n\n<a href="{channel.link_discussion}">{channel.text_discussion}</a>\n\n<a href="{channel.link_invitation}">{channel.text_invitation}</a>'
-        )
-
-        if len(text) >= 4000:
-            await message.reply(
-                f"Ошибка отправки в канал {channel.channel_name} количество символов ({len(text)})"
+        try:
+            text = (
+                await translate(message.text, channel.language)
+                + f'\n\n<a href="{channel.link_discussion}">{channel.text_discussion}</a>\n\n<a href="{channel.link_invitation}">{channel.text_invitation}</a>'
             )
-            continue
 
-        mess = await bot.send_message(
-            chat_id=channel.channel_id,
-            text=text,
-            parse_mode="HTML",
-        )
+            if len(text) >= 4000:
+                await message.reply(
+                    f"Ошибка отправки в канал {channel.channel_name} количество символов ({len(text)})"
+                )
+                continue
 
-        await message_repo.create(
-            main_message_id=str(message.message_id),
-            channel_id=channel.channel_id,
-            message_id=str(mess.message_id),
-        )
+            mess = await bot.send_message(
+                chat_id=channel.channel_id,
+                text=text,
+                parse_mode="HTML",
+            )
+
+            await message_repo.create(
+                main_message_id=str(message.message_id),
+                channel_id=channel.channel_id,
+                message_id=str(mess.message_id),
+            )
+            
+            sent_channels.append(channel.channel_name)
+            print(f"✅ Текст отправлен в канал: {channel.channel_name}")
+            
+        except Exception as e:
+            print(f"❌ Ошибка отправки текста в канал {channel.channel_name}: {e}")
+
+    print(f"🎯 Текстовое сообщение отправлено в {len(sent_channels)} каналов")
 
 
 @menu_router.message(Command("start"))
@@ -288,7 +342,10 @@ async def handle_media_group(messages: list[Message]):
                 f"Количество медиа больше 3({len(messages)}) пост не будет отправлен"
             )
             return
+            
         media_files_by_channel = {}
+        all_successful_outputs = {}
+        all_failed_channels = set()
 
         for message in messages:
             caption_start = message.caption or message.text
@@ -297,13 +354,21 @@ async def handle_media_group(messages: list[Message]):
                 message.photo[-1].file_id if message.photo else message.video.file_id
             )
 
-            output_paths, channels, media_path = await process_media_group(
+            successful_outputs, channels, media_path, failed_channels = await process_media_group(
                 message, media_type, file_id
             )
+            
+            all_successful_outputs.update(successful_outputs)
+            all_failed_channels.update(failed_channels)
 
             for channel in channels:
-                # Выбираем путь для отправки: с водяным знаком или без
-                output_path = output_paths.get(channel.channel_id, media_path)
+                # Пропускаем каналы с ошибками обработки
+                if channel.channel_id in failed_channels:
+                    print(f"⚠️ Пропускаем канал {channel.channel_name} для медиа {file_id}")
+                    continue
+                    
+                # Выбираем путь для отправки: с водяным знаком или оригинал
+                output_path = successful_outputs.get(channel.channel_id, media_path)
 
                 # Добавляем подпись только к первому медиафайлу для данного канала
                 if channel.channel_id not in media_files_by_channel:
@@ -342,31 +407,46 @@ async def handle_media_group(messages: list[Message]):
                 )
 
         # Отправка всех медиафайлов в соответствующие каналы
+        sent_channels = []
         for channel_id, media_files in media_files_by_channel.items():
-            mess = await bot.send_media_group(
-                chat_id=channel_id,
-                media=media_files,
-                request_timeout=120,
-            )
-            mess_ids = ""
-            for i in mess:
-                mess_ids += f"{i.message_id},"
-            await message_repo.create(
-                main_message_id=str(messages[0].message_id),
-                channel_id=channel_id,
-                message_id=mess_ids,
-            )
+            try:
+                mess = await bot.send_media_group(
+                    chat_id=channel_id,
+                    media=media_files,
+                    request_timeout=120,
+                )
+                mess_ids = ""
+                for i in mess:
+                    mess_ids += f"{i.message_id},"
+                await message_repo.create(
+                    main_message_id=str(messages[0].message_id),
+                    channel_id=channel_id,
+                    message_id=mess_ids,
+                )
+                
+                # Находим имя канала для логирования
+                channel = await channel_repo.get_by_channel_id(channel_id)
+                sent_channels.append(channel.channel_name if channel else channel_id)
+                print(f"✅ Медиа-группа отправлена в канал: {channel.channel_name if channel else channel_id}")
+                
+            except Exception as e:
+                channel = await channel_repo.get_by_channel_id(channel_id)
+                print(f"❌ Ошибка отправки медиа-группы в канал {channel.channel_name if channel else channel_id}: {e}")
 
         await messages[0].reply(f"id: {messages[0].message_id}")
+        
         # Удаление временных файлов
-        for output_paths_list in media_files_by_channel.values():
-            for media_file in output_paths_list:
-                try:
-                    os.remove(media_file.media.path)
-                except FileNotFoundError:
-                    print(f"Файл {media_file.media.path} не найден для удаления.")
-                except Exception as e:
-                    print(f"Ошибка при удалении файла {media_file.media.path}: {e}")
+        for output_path in all_successful_outputs.values():
+            try:
+                os.remove(output_path)
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                print(f"⚠️ Не удалось удалить файл {output_path}: {e}")
+
+        print(f"🎯 Медиа-группа обработана. Отправлено в {len(sent_channels)} каналов")
+        if all_failed_channels:
+            print(f"❌ Ошибки обработки в {len(all_failed_channels)} каналах")
 
 
 @menu_router.channel_post()
@@ -391,9 +471,13 @@ async def handle_edit(message: Message):
             channel_id = related_message.channel_id
             message_id = related_message.message_id
             # Обновление поста в канале
-            await bot.delete_message(
-                chat_id=channel_id,
-                message_id=message_id,
-            )
+            try:
+                await bot.delete_message(
+                    chat_id=channel_id,
+                    message_id=message_id,
+                )
+                print(f"✅ Удалено старое сообщение в канале {channel_id}")
+            except Exception as e:
+                print(f"⚠️ Не удалось удалить старое сообщение в канале {channel_id}: {e}")
 
         await handle_channel_video(message)
