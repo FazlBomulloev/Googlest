@@ -412,7 +412,7 @@ mistral_add_language_channel = Window(
         items="items",
         when="items",
     ),
-    Const("❌ Нет доступных каналов", when=lambda data, **kwargs: not data.get("items")),
+    Const("❌ Нет доступных каналов", when=lambda data, widget, manager: not data.get("items")),
     ScrollingGroup(
         Select(
             Format("{item[1]}"),
@@ -457,7 +457,7 @@ mistral_add_channel_to_lang = Window(
         items="items",
         when="items",
     ),
-    Const("❌ Нет доступных каналов", when=lambda data, **kwargs: not data.get("items")),
+    Const("❌ Нет доступных каналов", when=lambda data, widget, manager: not data.get("items")),
     ScrollingGroup(
         Select(
             Format("{item[1]}"),
@@ -484,7 +484,7 @@ mistral_remove_channel_from_lang = Window(
         items="items",
         when="items",
     ),
-    Const("❌ Нет привязанных каналов", when=lambda data, **kwargs: not data.get("items")),
+    Const("❌ Нет привязанных каналов", when=lambda data, widget, manager: not data.get("items")),
     ScrollingGroup(
         Select(
             Format("{item[1]}"),

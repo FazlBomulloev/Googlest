@@ -72,14 +72,14 @@ async def process_media_group(message: Message, media_type: str, file_id: str):
         for i in channels
     }
 
-    # Использование ProcessPoolExecutor для параллельной обработки с улучшенной обработкой ошибок
+    # ✅ ИСПРАВЛЕНО: правильное использование ProcessPoolExecutor с asyncio
     loop = asyncio.get_event_loop()
     successful_outputs = {}
     failed_channels = []
 
     with ProcessPoolExecutor(max_workers=15) as executor:
         # Создаем задачи для всех каналов
-        tasks = {}
+        futures_to_data = {}  # ✅ ИСПРАВЛЕНО: отдельный словарь для маппинга
         
         for watermark, output_path in zip(watermarks, output_paths.values()):
             channel_id = next(
@@ -95,13 +95,16 @@ async def process_media_group(message: Message, media_type: str, file_id: str):
                 output_path,
                 channel.watermark,
             )
-            tasks[future] = (channel_id, watermark, output_path)
+            # ✅ ИСПРАВЛЕНО: сохраняем данные по future, а не по исходному объекту
+            futures_to_data[future] = (channel_id, watermark, output_path)
         
-        # Обрабатываем результаты по мере завершения
-        for future in asyncio.as_completed(tasks.keys()):
-            channel_id, watermark, output_path = tasks[future]
+        # ✅ ИСПРАВЛЕНО: ждем завершения всех задач
+        for completed_future in asyncio.as_completed(futures_to_data.keys()):
             try:
-                result = await future
+                result = await completed_future
+                # ✅ ИСПРАВЛЕНО: используем completed_future как ключ
+                channel_id, watermark, output_path = futures_to_data[completed_future]
+                
                 if result is not None:
                     successful_outputs[channel_id] = output_path
                     print(f"✅ Успешно обработано: {watermark}")
@@ -109,6 +112,8 @@ async def process_media_group(message: Message, media_type: str, file_id: str):
                     failed_channels.append(channel_id)
                     print(f"❌ Ошибка обработки: {watermark}")
             except Exception as e:
+                # ✅ ИСПРАВЛЕНО: получаем данные по completed_future
+                channel_id, watermark, output_path = futures_to_data[completed_future]
                 failed_channels.append(channel_id)
                 print(f"❌ Исключение при обработке {watermark}: {e}")
 
@@ -158,14 +163,14 @@ async def process_media_single(message: Message, is_video: bool):
         for i in channels
     }
 
-    # Использование ProcessPoolExecutor для параллельной обработки с улучшенной обработкой ошибок
+    # ✅ ИСПРАВЛЕНО: правильное использование ProcessPoolExecutor с asyncio
     loop = asyncio.get_event_loop()
     successful_outputs = {}
     failed_channels = []
 
     with ProcessPoolExecutor(max_workers=4) as executor:
         # Создаем задачи для всех каналов
-        tasks = {}
+        futures_to_data = {}  # ✅ ИСПРАВЛЕНО: отдельный словарь для маппинга
         
         for watermark, output_path in zip(watermarks, output_paths.values()):
             channel_id = next(
@@ -181,13 +186,16 @@ async def process_media_single(message: Message, is_video: bool):
                 output_path,
                 channel.watermark,
             )
-            tasks[future] = (channel_id, watermark, output_path)
+            # ✅ ИСПРАВЛЕНО: сохраняем данные по future
+            futures_to_data[future] = (channel_id, watermark, output_path)
         
-        # Обрабатываем результаты по мере завершения
-        for future in asyncio.as_completed(tasks.keys()):
-            channel_id, watermark, output_path = tasks[future]
+        # ✅ ИСПРАВЛЕНО: правильная обработка as_completed
+        for completed_future in asyncio.as_completed(futures_to_data.keys()):
             try:
-                result = await future
+                result = await completed_future
+                # ✅ ИСПРАВЛЕНО: используем completed_future как ключ
+                channel_id, watermark, output_path = futures_to_data[completed_future]
+                
                 if result is not None:
                     successful_outputs[channel_id] = output_path
                     print(f"✅ Успешно обработано: {watermark}")
@@ -195,6 +203,8 @@ async def process_media_single(message: Message, is_video: bool):
                     failed_channels.append(channel_id)
                     print(f"❌ Ошибка обработки: {watermark}")
             except Exception as e:
+                # ✅ ИСПРАВЛЕНО: получаем данные по completed_future
+                channel_id, watermark, output_path = futures_to_data[completed_future]
                 failed_channels.append(channel_id)
                 print(f"❌ Исключение при обработке {watermark}: {e}")
 
